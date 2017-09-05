@@ -11,6 +11,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import *
+import MacLookUp
 
 # Global list of triples [Interface Index ID, MAC address, VLAN]
 list_if_mac_vlan = []
@@ -26,7 +27,7 @@ IF_DESCRIPTION_OID = '.1.3.6.1.2.1.2.2.1.2'
 VLAN_IF_TABLE_MOD = 'BRIDGE-MIB:CISCO-IF-EXTENSION-MIB:CISCO-VLAN-IFTABLE-RELATIONSHIP-MIB:IF-MIB'
 
 # Open file with database credentials
-file_name = '/var/www/vhosts/netwatch.mivamerchant.net/private/db_creds.txt'
+file_name = '/db_creds.txt'
 file_object = open(file_name,'r')
 creds = [(x.split(': '))[1] for x in (file_object.read()).splitlines()]
 
@@ -57,8 +58,9 @@ file_name = '/vlans_switch.txt'
 file_object = open(file_name,'r')
 lines = [(x.split(': '))[1] for x in (file_object.read()).splitlines()]
 
-#Store them in variables
+# Store them in variables
 phones_vlan, admins_vlan = lines[0:2]
+
 
 def populate_vlans_ids():
     """Populates a global list of the found VLANs IDs."""
@@ -208,13 +210,35 @@ def update_indexes_macs_vlans():
             continue
 
         # Otherwise, just add new device to table
+        # But first, let's check if the MAC exists and its allowed_vlan_list
+        # is not null so we can use its value for the new entry
+        select = """
+                    SELECT allowed_vlan_list
+                    FROM %s
+                    WHERE mac='%s'
+                    AND allowed_vlan_list IS NOT NULL
+                 """ % (table_name,\
+                        mac
+                       )
+
+        found = cursor.execute(select)
+
+        if found:
+            for result in cursor:
+                allowed_vlan_list = result[0]
+                break
+        else:
+            allowed_vlan_list = ''
+
         insert = """
-                    INSERT INTO %s (if_index, mac, vlan, is_new, last_seen)
-                    VALUES ('%s', '%s', '%s', 'Y', '%s')
+                    INSERT INTO %s (if_index, mac, vlan, allowed_vlan_list,\
+                                    is_new, last_seen)
+                    VALUES ('%s', '%s', '%s', '%s', 'Y', '%s')
                  """ % (table_name,\
                         index,\
                         mac,\
                         vlan,\
+                        allowed_vlan_list,\
                         dat
                        )
 
@@ -541,37 +565,10 @@ def update_staff_name():
     return
 
 
-def update_make_model():
-    """Populates the make_model column of the table."""
+def update_manufacturer():
+    """Populates the manufacturer column of the table."""
 
-    # Arguments to be used in snmpwalk
-    arg1 = ['-v' + version, '-m' + 'ENTITY-MIB', '-l' + security,\
-           '-u' + user, '-a' + auth_protocol, '-A' + auth_password,\
-           '-x' + priv, '-X' + priv_password, host, 'entPhysicalModelName']
-
-    arg2 = ['-v' + version, '-m' + 'ENTITY-MIB', '-l' + security,\
-           '-u' + user, '-a' + auth_protocol, '-A' + auth_password,\
-           '-x' + priv, '-X' + priv_password, host, 'entPhysicalAlias']
-
-    if_makemodel = subprocess.Popen(['snmpwalk'] + arg1,\
-                                stdout=subprocess.PIPE).communicate()[0]
-
-    alias_if = subprocess.Popen(['snmpwalk'] + arg2,\
-                                stdout=subprocess.PIPE).communicate()[0]
-
-    if_makemodel_list = if_makemodel.splitlines()
-    alias_if_list = alias_if.splitlines()
-
-    temp_dic = {}
-
-    for row in alias_if_list:
-        left, index = row.split(' = STRING: ')[0:2]
-
-        if index == '':
-            continue
-
-        alias = left.split('.')[-1]
-        temp_dic[alias] = index
+    mac_lookup = MacLookUp.get_mac_dictionary()
 
     # Open database connection
     db = MySQLdb.connect(user=username,db=db_name,passwd=password)
@@ -579,22 +576,27 @@ def update_make_model():
     # Prepare a cursor object
     cursor = db.cursor()
 
-    # Parse list's items to get interface index and device's 
-    # make/model to insert into DB table
-    for row in if_makemodel_list:
-        alias, make_model = row.split(' = STRING: ')[0:2]
-        alias = alias.split('.')[-1]
+    # Get new devices in table
+    query = """
+                SELECT mac
+                FROM %s
+            """ % (table_name)
 
-        if alias not in temp_dic.keys():
-            continue
+    cursor.execute(query)
+
+    for result in cursor:
+        mac = result[0]
+
+        manuf = MacLookUp.get_manufacturer(mac, mac_lookup)
 
         update = """
                     UPDATE %s
-                    SET make_model = '%s'
-                    WHERE if_index = '%s'
+                    SET manufacturer = '%s'
+                    WHERE mac = '%s'
+                    AND is_new = 'Y'
                  """ % (table_name,\
-                        make_model,\
-                        temp_dic[alias]\
+                        manuf,\
+                        mac\
                        )
         try:
             cursor.execute(update)
@@ -624,7 +626,7 @@ def detect_suspicious_devices():
 
     # Get new devices in table
     query = """
-                SELECT mac, vlan, most_recent_ipv4 
+                SELECT mac, vlan, most_recent_ipv4, manufacturer 
                 FROM %s
                 WHERE is_new = 'Y'
             """ % (table_name)
@@ -635,6 +637,8 @@ def detect_suspicious_devices():
         mac = result[0]
         vlan = result[1]
         ipv4 = result[2]
+        manuf = result[3]
+
         message = "Device " + mac + " appeared on the network. "
         print 'New device:', mac
 
@@ -650,9 +654,9 @@ def detect_suspicious_devices():
 
         for results in cursor:
             for item in results:
-                if type(item) is list:
-                    if vlan in item:
-                        allowed = True
+                if vlan in item:
+                    allowed = True
+                    break
 
         if not allowed:
             message += "Device is on VLAN that is not in its allowed VLANs list. "
@@ -661,18 +665,14 @@ def detect_suspicious_devices():
         # Determine if the MAC appears on a VLAN known to be for phones
         # and does not have a prefix that maps to Cisco
         if vlan in phones_vlan:
-            if "0:e1:6d:ba" not in mac and\
-               "c8:0:84:aa" not in mac and\
-               "2c:3e:cf:87" not in mac and\
-               "6c:fa:89:94" not in mac and\
-               "54:4a:0:37" not in mac:
+            if 'Cisco' not in manuf:
                 message += "Device is on the phones VLAN. "
                 print 'Device is on the phones VLAN'
 
         # If the device does not have an IP address, it may suggest
         # that a device on the network is not talking IPv4/6, which
         # should never be the case
-        if ip == None:
+        if ipv4 == None:
             message += "Device is not in the ARP neighbor table. "
             print 'MAC address %s is not in the ARP neighbor table' % mac
 
@@ -688,16 +688,16 @@ def notice_email(msg):
     server = smtplib.SMTP('localhost',25)
     server.starttls()
 
-    f = 'myemail@example.com'
-    t = 'youremail@example.com'
+    f = 'you@example.com'
+    t = 'me@example.com'
 
     container = MIMEMultipart('alternative')
     container['Subject'] = 'Network Alert: %s' % table_name
     container['From'] = f
     container['To'] = t
 
-    extra = "Visit netwatch.mivamerchant.net/phpMyEdit/%s.php and edit the \
-             Allowed VLAN List field for the new device; i.e: '120, 230'\n" % table_name
+    extra = "Visit my.example.net/phpMyEdit/%s.php and edit the Allowed VLAN List \
+             field for the new device; i.e: '120, 230'\n" % table_name
     text = msg + extra
     
     html = """\
@@ -705,9 +705,8 @@ def notice_email(msg):
                 <head></head>
                 <body>
                     <p>%s</p>
-                    <p>Visit <a href="netwatch.mivamerchant.net/phpMyEdit/%s.php">this \
-                    site</a> and edit the Allowed VLAN List field for the new device; \
-                    i.e: '120, 230'\n </p>
+                    <p>Visit <a href="my.example.net/phpMyEdit/%s.php">this site</a> and \
+                    edit the Allowed VLAN List field for the new device; i.e: '120, 230'\n </p>
                 </body>
               </html>
            """ % (msg, table_name)
@@ -720,6 +719,146 @@ def notice_email(msg):
 
     server.sendmail(f, t, container.as_string())
     server.quit()
+
+    return
+
+
+def remove_old():
+    """Removes entries older than 15 days from the table."""
+
+    # Open database connection
+    db = MySQLdb.connect(user=username,db=db_name,passwd=password)
+
+    # Prepare a cursor object
+    cursor = db.cursor()
+
+    # Query to remove entries older than 15 days
+    delete = """
+                DELETE
+                FROM %s
+                WHERE last_seen < (NOW() - INTERVAL 15 DAY)
+             """ % (table_name)
+    try:
+        cursor.execute(delete)
+        db.commit()
+
+    except:
+        print "Error in table remove:", cursor._last_executed
+        db.rollback()
+
+    db.close()
+
+    return
+
+
+def set_is_new_to_N():
+    """ When the new and/or suspicious devices were reported, make them
+    not new to avoid reporting them again on the next run. """
+
+    # Open database connection
+    db = MySQLdb.connect(user=username,db=db_name,passwd=password)
+
+    # Prepare a cursor object
+    cursor = db.cursor()
+
+    # Query to set column is_new to 'N'
+    set_not_new = """
+                     UPDATE %s
+                     SET is_new = 'N'
+                  """ % (table_name)
+
+    try:
+        cursor.execute(set_not_new)
+        db.commit()
+
+    except:
+        print "Error in table update:", cursor._last_executed
+        db.rollback()
+
+    db.close()
+
+    return
+
+
+def create_table():
+    """Creates the table necessary for for this program."""
+
+    # Open database connection
+    db = MySQLdb.connect(user=username,db=db_name,passwd=password)
+
+    # Prepare a cursor object
+    cursor = db.cursor()
+
+    # Query to create a new table that will contain all the devices
+    # on the network. It will be called table_name
+    create = """
+                CREATE TABLE %s   (
+                                   if_index INT(5) NOT NULL,
+                                   mac VARCHAR(50) NOT NULL, 
+                                   vlan VARCHAR(5) NOT NULL,
+                                   staff_name VARCHAR(120),
+                                   switch_port INT(5), 
+                                   manufacturer VARCHAR(120),
+                                   description VARCHAR(120),
+                                   most_recent_detection TIMESTAMP,
+                                   allowed_vlan_list VARCHAR(120),
+                                   most_recent_ipv4 VARCHAR(50),
+                                   most_recent_ipv6 VARCHAR(50),
+                                   is_new VARCHAR(1),
+                                   last_seen TIMESTAMP,
+                                   id INT(4),
+                                   PRIMARY KEY(if_index, mac, vlan),
+                                   CONSTRAINT uniq UNIQUE(if_index, mac, vlan)
+                                  )
+             """ % (table_name)
+
+    cursor.execute(create)
+    db.commit()
+
+    db.close()
+
+    return
+
+
+def populate_id():
+    """Because phpMyEdit needs a table to have a single primary key,
+       this function will populate the id column of the table with
+       integers."""
+
+    # Open database connection
+    db = MySQLdb.connect(user=username,db=db_name,passwd=password)
+
+    # Prepare a cursor object
+    cursor = db.cursor()
+
+    # Get all devices from table
+    query = """SELECT if_index, mac, vlan 
+               FROM %s
+               ORDER BY if_index
+            """ % (table_name)
+
+    cursor.execute(query)
+    
+    i = 0
+
+    for result in cursor:
+        if_index, mac, vlan = list(result)
+
+        query = """UPDATE %s
+                   SET id=%d
+                   WHERE if_index = '%s' AND
+                         mac = '%s' AND 
+                         vlan = '%s'
+                """ % (table_name, i, if_index, mac, vlan)
+
+        cursor.execute(query)
+        db.commit()
+        i += 1
+
+    # Close database connection
+    db.close()
+    
+    return
 
 
 def main():
@@ -738,34 +877,12 @@ def main():
 
     # Boolean variable that holds True if a table_name exists
     table_existed = cursor.execute(check)
-    
+
+    db.close()
+ 
     if not table_existed:
-
-        # Query to create a new table that will contain all the devices
-        # on the network. It will be called table_name
-        create = """
-                    CREATE TABLE %s   (
-                                      if_index INT(5) NOT NULL,
-                                      mac VARCHAR(50) NOT NULL, 
-                                      vlan VARCHAR(5) NOT NULL,
-                                      staff_name VARCHAR(120),
-                                      switch_port INT(5), 
-                                      make_model VARCHAR(120),
-                                      description VARCHAR(120),
-                                      most_recent_detection TIMESTAMP,
-                                      allowed_vlan_list VARCHAR(120),
-                                      most_recent_ipv4 VARCHAR(50),
-                                      most_recent_ipv6 VARCHAR(50),
-                                      is_new VARCHAR(1),
-                                      last_seen TIMESTAMP,
-                                      PRIMARY KEY(if_index, mac, vlan),
-                                      CONSTRAINT uniq UNIQUE(if_index, mac, vlan)
-                                      )
-                 """ % (table_name)
-
         print '-> Creating table %s...' % (table_name)
-        cursor.execute(create)
-        db.commit()
+        create_table()
 
     print '-> Retrieving VLAN ids...'
     populate_vlans_ids()
@@ -788,32 +905,18 @@ def main():
     print '-> Adding staff names on new devices only, if found...'
     update_staff_name()
 
-    print '-> Adding make/model...'
-    update_make_model()
+    print '-> Adding manufacturer...'
+    update_manufacturer()
 
-    # The following function will make queries on table_name 
-    # to detect new and/or suspicius devices on the network
     print '-> Detecting new and/or suspicious devices...'
     detect_suspicious_devices()
     
-    # As all the new and/or suspicious devices were reported, make them
-    # not new to avoid reporting them again on the next run
+    print '-> Removing devices not seen within more than 7 days...'
+    remove_old()
 
-    # Query to set column is_new to 'N'
-    set_not_new = """
-                     UPDATE %s
-                     SET is_new = 'N'
-                  """ % (table_name)
-
-    try:
-        cursor.execute(set_not_new)
-        db.commit()
-
-    except:
-        print "Error in table update:", cursor._last_executed
-        db.rollback()   
-
-    db.close()
+    print '-> Updating column is_new to \'N\' and populating \'id\'...'
+    set_is_new_to_N()
+    populate_id()
 
 
 if __name__ == '__main__':

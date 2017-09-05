@@ -1,0 +1,4 @@
+username: myusername
+db_name: mydatabase
+password: mypassword
+

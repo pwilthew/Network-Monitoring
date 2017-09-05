@@ -1,0 +1,8 @@
+version: 3
+security: authPriv
+user: user-name
+auth-protocol: SHA
+auth-password: ffgghhiijj
+priv: AES
+priv-password: aabbccddee
+host: 10.10.10.11

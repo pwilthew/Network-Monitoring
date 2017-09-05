@@ -1,0 +1,9 @@
+version: 3
+security: authPriv
+user: user-name
+auth-protocol: MD5
+auth-password: gghhiijjkkll
+priv: AES
+priv-password: aabbccddeeff
+host: 10.10.10.10
+db table name used to store found network devices: mytable
