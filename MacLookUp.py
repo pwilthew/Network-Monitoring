@@ -1,10 +1,15 @@
 #!/usr/bin/env python2
+__author__ = "Patricia Wilthew"
+
 """Uses Wireshark manufacturer database, which is a list of OUIs
 and MAC addresses compiled from a number of sources, to return
 a manufacturer's name given a MAC. """
 import urllib2
 
 def get_mac_dictionary():
+    """Returns a dictionary of MAC prefixes and their manufacturer
+    based on Wireshark's manufacturer database."""
+
     response = urllib2.urlopen('https://code.wireshark.org/review/gitweb?p=wireshark.git;a=blob_plain;f=manuf')
     html = response.read()
 
@@ -21,6 +26,8 @@ def get_mac_dictionary():
 
 
 def get_manufacturer(mac, mac_lookup):
+    """Returns the manufacturer of a MAC given a dictionary of
+    MAC prefixes and their manufacturer."""
 
     mac = mac.upper()
     new_mac = []
