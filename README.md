@@ -24,6 +24,8 @@ The database table is named as specified in the SNMP credentials file that the p
 
 The table has the following description:
 
+```SQL
+
 if_index INT(5) NOT NULL,           This is the interface index as seen by the switch
 mac VARCHAR(50) NOT NULL,           Physical address of device
 vlan VARCHAR(5) NOT NULL,           VLAN where device was found
@@ -42,6 +44,7 @@ is_new VARCHAR(1),                  Used by the script to perform certain operat
 id INT(4),                          This is irrelevant. phpMyEdit is not set to use triple keys so this column solves that issue. It is dynamically assigned every time
 PRIMARY KEY(if_index, mac, vlan),   Because there can be a device in more than one VLAN and with more than one interface index, the key is triple to be able to identify all unique connections.
 CONSTRAINT uniq UNIQUE(if_index, mac, vlan)
+```
 
 # How it works
 * The script will create the table it needs, if it does not exist, yet using *netwatch.create_table()*.
