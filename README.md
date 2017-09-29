@@ -28,31 +28,29 @@ Each table has the following description:
     mac VARCHAR(50) NOT NULL,           Physical address of device
     vlan VARCHAR(5) NOT NULL,           VLAN where device was found
     name VARCHAR(120),                  Name of device as seen by the switch
-    staff_name VARCHAR(120),            Name of employee who owns the device. **Manually populated** (or with a manually run script in /extras)
+    staff_name VARCHAR(120),            Name of employee who uses the device. **Manually populated**
     description VARCHAR(120),           Description of device as seen by the switch
     switch_port INT(5),                 Physical switch port the device was found on
     manufacturer VARCHAR(120),          Manufacturer of device. Automatically populated with the help of MacLookUp.py
     allowed_vlan_list VARCHAR(120),     Comma separated list of VLANs in which the device is accepted (format example: '1, 3, 4'). **Manually populated**
     most_recent_ipv4 VARCHAR(50),       Last IPv4 address seen by the switch. If the switch does not route the device, then the address is obtained from the firewall
     most_recent_ipv6 VARCHAR(50),       Last IPv6 address seen by the switch, if applicable
-    is_uplink VARCHAR(1),               If the port is considered a trunkport, should contain 'Y'; otherwise 'N'. `show run` will show which ports have `switchport mode trunk`. **Manually populated**
+    is_uplink VARCHAR(1),               If the port is considered a trunkport. `show run` will show which ports have `switchport mode trunk`. **Manually populated**
     last_seen TIMESTAMP,                The last time the device was seen by the switch
     most_recent_detection TIMESTAMP,    This is called ifLastChange, or interface last change
     is_new VARCHAR(1),                  Used by the script to perform certain operations with only the most recently found devices
     id INT(4),                          This is irrelevant. phpMyEdit is not set to use triple keys so this column solves that issue. It is dynamically assigned every time
-    PRIMARY KEY(if_index, mac, vlan),   Because there can be a MAC in more than one VLAN and with more than one interface index, the key is triple to be able to identify all unique connections.
+    PRIMARY KEY(if_index, mac, vlan),   Because there can be a device in more than one VLAN and with more than one interface index, the key is triple to be able to identify all unique connections.
     CONSTRAINT uniq UNIQUE(if_index, mac, vlan)
 
 # How it works
-* The script will create the table it needs if it does not exist yet using *netwatch.create_table()*.
+* The script will create the table it needs, if it does not exist, yet using *netwatch.create_table()*.
 
 * The global VLANs' list will be populated with *populate_vlans_ids()*.
 
 * Then *netwatch.retrieve_indexes_macs()* will execute three `snmpwalk` commands to get three different lists from the switch (a baseport-index list, a MAC-baseport list, and a MAC list). 
 
-The reason why the third one is necessary is that the MAC-baseport list shows the MAC address in ASCII representation, and of course, most of the characters in a MAC address are not printable and there is no way to find out the actual hex numbers. But I noticed that the MAC-baseport list and the MAC list had exactly the same lenght and that the MAC addresses on each line actually corresponded to each other. 
-
-So, pairing the two lists together with zip() made sense. The goal was to associate Indexes with MAC addresses based on the two lists, baseport-index and MAC-baseport. A list of lists with the format *[ [if1, mac1, vlan1], [if2, mac2, vlan2], .. ]* is returned.
+The reason why the third one is necessary is that the MAC-baseport list shows the MAC address in ASCII representation, and of course, most of the characters in a MAC address are not printable and there is no way to find out the actual hex numbers. But I noticed that the MAC-baseport list and the MAC list had exactly the same lenght and that the MAC addresses on each line actually corresponded to each other. So, pairing the two lists together with zip() made sense. The goal was to associate Indexes with MAC addresses based on the two lists, baseport-index and MAC-baseport. A list of lists with the format *[ [if1, mac1, vlan1], [if2, mac2, vlan2], .. ]* is returned.
 
 * The list of lists returned from the previous function is one of the inputs of *netwatch.update_indexes_macs_vlans()*, which is the function in charge of inserting or updating entries on the table. It will update its `last_seen` column on the entries that existed. If an entry was not in the table but is in the respective cemetery table (which contain devices that existed in the past), then it will insert it to the table with extra fields that were manually populated in the past; such as `staff_name`, `allowed_vlan_list`, and `is_uplink`. And finally, if the (index, mac, vlan) is not in any of the tables, then inserts it with the column `is_new` set to 'Y'.
 
