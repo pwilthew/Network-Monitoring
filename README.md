@@ -26,23 +26,23 @@ The table has the following description:
 
 ```SQL
 
-if_index INT(5) NOT NULL,           This is the interface index as seen by the switch
-mac VARCHAR(50) NOT NULL,           Physical address of device
-vlan VARCHAR(5) NOT NULL,           VLAN where device was found
-name VARCHAR(120),                  Name of device as seen by the switch
-staff_name VARCHAR(120),            Name of employee who uses the device. **Manually populated**
-description VARCHAR(120),           Description of device as seen by the switch
-switch_port INT(5),                 Physical switch port the device was found on
-manufacturer VARCHAR(120),          Manufacturer of device. Automatically populated with the help of MacLookUp.py
-allowed_vlan_list VARCHAR(120),     Comma separated list of VLANs in which the device is accepted (format example: '1, 3, 4'). **Manually populated**
-most_recent_ipv4 VARCHAR(50),       Last IPv4 address seen by the switch. If the switch does not route the device, then the address is obtained from the firewall
-most_recent_ipv6 VARCHAR(50),       Last IPv6 address seen by the switch, if applicable
-is_uplink VARCHAR(1),               If the port is considered a trunkport. `show run` will show which ports have `switchport mode trunk`. **Manually populated**
-last_seen TIMESTAMP,                The last time the device was seen by the switch
-most_recent_detection TIMESTAMP,    This is called ifLastChange, or interface last change
-is_new VARCHAR(1),                  Used by the script to perform certain operations with only the most recently found devices
-id INT(4),                          This is irrelevant. phpMyEdit is not set to use triple keys so this column solves that issue. It is dynamically assigned every time
-PRIMARY KEY(if_index, mac, vlan),   Because there can be a device in more than one VLAN and with more than one interface index, the key is triple to be able to identify all unique connections.
+if_index INT(5) NOT NULL,           /*This is the interface index as seen by the switch
+mac VARCHAR(50) NOT NULL,           /*Physical address of device
+vlan VARCHAR(5) NOT NULL,           /*VLAN where device was found
+name VARCHAR(120),                  /*Name of device as seen by the switch
+staff_name VARCHAR(120),            /*Name of employee who uses the device. **Manually populated**
+description VARCHAR(120),           /*Description of device as seen by the switch
+switch_port INT(5),                 /*Physical switch port the device was found on
+manufacturer VARCHAR(120),          /*Manufacturer of device. Automatically populated with the help of MacLookUp.py
+allowed_vlan_list VARCHAR(120),     /*Comma separated list of VLANs in which the device is accepted (format example: '1, 3, 4'). **Manually populated**
+most_recent_ipv4 VARCHAR(50),       /*Last IPv4 address seen by the switch. If the switch does not route the device, then the address is obtained from the firewall
+most_recent_ipv6 VARCHAR(50),       /*Last IPv6 address seen by the switch, if applicable
+is_uplink VARCHAR(1),               /*If the port is considered a trunkport. `show run` will show which ports have `switchport mode trunk`. **Manually populated**
+last_seen TIMESTAMP,                /*The last time the device was seen by the switch
+most_recent_detection TIMESTAMP,    /*This is called ifLastChange, or interface last change
+is_new VARCHAR(1),                  /*Used by the script to perform certain operations with only the most recently found devices
+id INT(4),                          /*This is irrelevant. phpMyEdit is not set to use triple keys so this column solves that issue. It is dynamically assigned every time
+PRIMARY KEY(if_index, mac, vlan),   /*Because there can be a device in more than one VLAN and with more than one interface index, the key is triple to be able to identify all unique connections.
 CONSTRAINT uniq UNIQUE(if_index, mac, vlan)
 ```
 
